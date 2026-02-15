@@ -2,61 +2,189 @@
 <html lang="cs">
 <head>
     <meta charset="UTF-8">
-    <title>Pérák: Duel</title>
+    <title>Pérák 1v1</title>
     <style>
-        body { background: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; font-family: sans-serif; }
-        canvas { background: #333; border: 2px solid #555; }
+        body { margin: 0; background: #222; color: white; font-family: 'Courier New', monospace; overflow: hidden; }
+        #menu { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; }
+        input { padding: 10px; font-size: 20px; text-align: center; }
+        button { padding: 10px 20px; font-size: 20px; background: red; color: white; border: none; cursor: pointer; margin-top: 10px; }
+        canvas { display: block; background: #333; }
+        #status { position: absolute; top: 10px; left: 10px; font-size: 20px; font-weight: bold; }
     </style>
 </head>
 <body>
-    <h1>Pérák: Duel</h1>
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <div id="menu">
+        <h1>PÉRÁK: DUEL</h1>
+        <p>Zadej název arény (např. "sklep")</p>
+        <input type="text" id="roomName" placeholder="Název místnosti" value="arena1">
+        <button onclick="joinGame()">VSTOUPIT DO BOJE</button>
+    </div>
+
+    <div id="status">Čekání na hráče...</div>
+    <canvas id="gameCanvas"></canvas>
+
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        
-        // Připojení k serveru (WebSocket)
-        // Automaticky zjistí, jestli jsme na localhostu nebo na Renderu (wss vs ws)
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // WebSocket
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(protocol + '//' + window.location.host + '/ws');
 
-        let player = { x: 50, y: 500, vy: 0, grounded: false };
-        const gravity = 0.8;
-        const jumpPower = -15; // Pérák má pružiny!
+        let gameRunning = false;
+        let myId = Math.random(); // Dočasné ID
+        
+        // Hráč (TY)
+        const me = { x: 100, y: 300, w: 30, h: 50, vy: 0, hp: 100, color: 'red' };
+        // Nepřítel
+        const enemy = { x: -100, y: 300, w: 30, h: 50, hp: 100, color: 'blue' };
+        
+        let bullets = []; // {x, y, vx, vy, owner}
 
-        // Ovládání
-        window.addEventListener('keydown', e => {
-            if (e.code === 'Space' && player.grounded) {
-                player.vy = jumpPower;
-                player.grounded = false;
-                socket.send("SKOK"); // Pošleme info serveru
+        // Fyzika
+        const gravity = 0.8;
+        const keys = {};
+
+        // 1. PŘIPOJENÍ
+        function joinGame() {
+            const room = document.getElementById('roomName').value;
+            if(!room) return alert("Zadej jméno místnosti!");
+            
+            socket.send(JSON.stringify({ type: "join", room: room }));
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('status').innerText = "Čekám na soupeře v roomce: " + room;
+        }
+
+        // 2. PŘÍJEM DAT ZE SERVERU
+        socket.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+
+            if (msg.type === "start") {
+                gameRunning = true;
+                document.getElementById('status').innerText = "BOJUJ! (WASD + Myš)";
+                // Reset pozic
+                me.x = 100; me.y = 300; me.hp = 100;
+                enemy.x = canvas.width - 150; enemy.y = 300; enemy.hp = 100;
             }
+            
+            if (msg.type === "update") {
+                // Aktualizujeme polohu nepřítele
+                enemy.x = msg.x;
+                enemy.y = msg.y;
+            }
+
+            if (msg.type === "shoot") {
+                // Nepřítel vystřelil
+                bullets.push({ x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, owner: 'enemy' });
+            }
+
+            if (msg.type === "win_disconnect") {
+                alert("Soupeř utekl! Vyhrál jsi.");
+                location.reload();
+            }
+        };
+
+        // 3. OVLÁDÁNÍ
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+        
+        window.addEventListener('mousedown', (e) => {
+            if (!gameRunning) return;
+            // Výpočet směru střely
+            const angle = Math.atan2(e.clientY - me.y, e.clientX - me.x);
+            const speed = 15;
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+
+            // Vytvoření střely u mě
+            bullets.push({ x: me.x + 15, y: me.y + 25, vx: vx, vy: vy, owner: 'me' });
+
+            // Odeslání info soupeři
+            socket.send(JSON.stringify({ type: "shoot", x: me.x + 15, y: me.y + 25, vx: vx, vy: vy }));
         });
 
+        // 4. HERNÍ SMYČKA
         function update() {
-            // Fyzika
-            player.vy += gravity;
-            player.y += player.vy;
+            if (!gameRunning) return;
+
+            // Pohyb
+            if (keys['KeyA']) me.x -= 5;
+            if (keys['KeyD']) me.x += 5;
+            if (keys['Space'] && me.grounded) { me.vy = -15; me.grounded = false; }
+
+            // Gravitace
+            me.vy += gravity;
+            me.y += me.vy;
 
             // Podlaha
-            if (player.y > 550) {
-                player.y = 550;
-                player.vy = 0;
-                player.grounded = true;
+            me.grounded = false;
+            if (me.y > canvas.height - 100) {
+                me.y = canvas.height - 100;
+                me.vy = 0;
+                me.grounded = true;
+            }
+
+            // Odeslání mé polohy soupeři (každý frame - neefektivní ale jednoduché)
+            socket.send(JSON.stringify({ type: "update", x: me.x, y: me.y }));
+
+            // Střely
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                let b = bullets[i];
+                b.x += b.vx;
+                b.y += b.vy;
+
+                // Kolize s nepřítelem (když střílím já)
+                if (b.owner === 'me' && 
+                    b.x > enemy.x && b.x < enemy.x + enemy.w &&
+                    b.y > enemy.y && b.y < enemy.y + enemy.h) {
+                    
+                    bullets.splice(i, 1);
+                    enemy.hp -= 10; // Jen vizuálně u mě
+                    // Tady by se mělo poslat info o zásahu
+                }
+                
+                // Kolize se mnou (když střílí on)
+                else if (b.owner === 'enemy' && 
+                    b.x > me.x && b.x < me.x + me.w &&
+                    b.y > me.y && b.y < me.y + me.h) {
+                    
+                    bullets.splice(i, 1);
+                    me.hp -= 10;
+                    if(me.hp <= 0) {
+                        alert("Byl jsi zastřelen!");
+                        location.reload();
+                    }
+                }
             }
         }
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Kreslení Péráka
-            ctx.fillStyle = 'red';
-            ctx.fillRect(player.x, player.y, 30, 50); // Tělo
-            
-            // Pružiny na nohou
-            ctx.fillStyle = 'silver';
-            ctx.fillRect(player.x, player.y + 50, 10, 10);
-            ctx.fillRect(player.x + 20, player.y + 50, 10, 10);
+
+            if (!gameRunning) return;
+
+            // Kreslení MĚ (Červený)
+            ctx.fillStyle = me.color;
+            ctx.fillRect(me.x, me.y, me.w, me.h);
+            ctx.fillStyle = "white";
+            ctx.fillText("JA: " + me.hp + "%", me.x, me.y - 10);
+
+            // Kreslení SOUPEŘE (Modrý)
+            ctx.fillStyle = enemy.color;
+            ctx.fillRect(enemy.x, enemy.y, enemy.w, enemy.h);
+            ctx.fillStyle = "white";
+            ctx.fillText("ON", enemy.x, enemy.y - 10);
+
+            // Střely
+            ctx.fillStyle = "yellow";
+            bullets.forEach(b => ctx.fillRect(b.x, b.y, 10, 10));
+
+            // Podlaha
+            ctx.fillStyle = "#555";
+            ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
         }
 
         function loop() {
@@ -64,8 +192,8 @@
             draw();
             requestAnimationFrame(loop);
         }
-
         loop();
+
     </script>
 </body>
 </html>
