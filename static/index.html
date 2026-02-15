@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Pérák: Duel</title>
+    <style>
+        body { background: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; font-family: sans-serif; }
+        canvas { background: #333; border: 2px solid #555; }
+    </style>
+</head>
+<body>
+    <h1>Pérák: Duel</h1>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Připojení k serveru (WebSocket)
+        // Automaticky zjistí, jestli jsme na localhostu nebo na Renderu (wss vs ws)
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const socket = new WebSocket(protocol + '//' + window.location.host + '/ws');
+
+        let player = { x: 50, y: 500, vy: 0, grounded: false };
+        const gravity = 0.8;
+        const jumpPower = -15; // Pérák má pružiny!
+
+        // Ovládání
+        window.addEventListener('keydown', e => {
+            if (e.code === 'Space' && player.grounded) {
+                player.vy = jumpPower;
+                player.grounded = false;
+                socket.send("SKOK"); // Pošleme info serveru
+            }
+        });
+
+        function update() {
+            // Fyzika
+            player.vy += gravity;
+            player.y += player.vy;
+
+            // Podlaha
+            if (player.y > 550) {
+                player.y = 550;
+                player.vy = 0;
+                player.grounded = true;
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Kreslení Péráka
+            ctx.fillStyle = 'red';
+            ctx.fillRect(player.x, player.y, 30, 50); // Tělo
+            
+            // Pružiny na nohou
+            ctx.fillStyle = 'silver';
+            ctx.fillRect(player.x, player.y + 50, 10, 10);
+            ctx.fillRect(player.x + 20, player.y + 50, 10, 10);
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
